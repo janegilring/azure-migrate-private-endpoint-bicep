@@ -26,7 +26,6 @@ This module was **reverse-engineered from a working portal deployment** and prov
 | Migrate Project (hub) | `Microsoft.Migrate/migrateProjects` | `Default` |
 | Assessment Project | `Microsoft.Migrate/assessmentProjects` | `Default` |
 | Master Site | `Microsoft.OffAzure/MasterSites` | `Default` |
-| VMware Site | `Microsoft.OffAzure/VMwareSites` | — |
 | Migrate Solutions (3) | `Microsoft.Migrate/migrateProjects/solutions` | — |
 | RBAC Role Assignment | `Microsoft.Authorization/roleAssignments` | — |
 | Key Vault Access Policy | `Microsoft.KeyVault/vaults/accessPolicies` | — |
@@ -48,16 +47,11 @@ This module was **reverse-engineered from a working portal deployment** and prov
 │  ┌──────┴───────┐  ┌──────┴───────┐             │                  │
 │  │ Master Site  │  │ Storage      │             │                  │
 │  │ (appliance)  │  │ Account      │             │                  │
-│  └──────┬───────┘  └──────────────┘             │                  │
-│         │                                        │                  │
-│  ┌──────┴───────┐                                │                  │
-│  │ VMware Site  │                                │                  │
-│  │ (discovery)  │                                │                  │
-│  └──────────────┘                                │                  │
-│         │                                        │                  │
-│  ┌──────┴───────┐                                │                  │
-│  │ Key Vault    │                                │                  │
-│  └──────────────┘                                │                  │
+│  └──────────────┘  └──────────────┘             │                  │
+│                                                  │                  │
+│  ┌──────────────────┐                            │                  │
+│  │ Key Vault        │                            │                  │
+│  └──────────────────┘                            │                  │
 │                                                                     │
 └─────────────────────────────┬───────────────────────────────────────┘
                               │ Private Endpoints (6)
@@ -147,7 +141,7 @@ bicep/
 
 2. **Service-managed resources:** After deployment, Azure Migrate may provision additional resources automatically (e.g., `Microsoft.DependencyMap/maps`, `Microsoft.MySqlDiscovery/MySQLSites`, `Microsoft.ApplicationMigration/*`). These are service-managed and should not be included in IaC.
 
-3. **VMware Site identity:** The VMware Site `servicePrincipalIdentityDetails` are populated automatically by the Azure Migrate appliance after registration. The template omits these properties and links the VMware Site to the Discovery Solution via `discoverySolutionId` instead.
+3. **VMware Site deployment removed:** This module previously included a VMware Site resource (`Microsoft.OffAzure/vmwareSites`), but it was removed because the portal creates an unnamed appliance entry which caused confusion. The VMware Site is now created automatically by the Azure portal when you click **"Generate key"** in the **Azure Migrate hub → Discover → Set up appliance** flow. The portal creates it with the correct appliance name and generates the project key in one step. No Bicep deployment is needed for this resource.
 
 4. **Portal PE display:** The portal's Properties blade for the Migrate project shows a "Private endpoint details" table with PE names. This table only displays PEs that were created through the Azure Migrate portal's built-in PE wizard — not standalone PEs created via Bicep/ARM. Our PEs appear as `-` in this table but are **functionally correct** (traffic routes through them, connections are `Approved`, DNS resolves correctly). This is a cosmetic limitation of the portal UI, not a functional issue. Even portal-created deployments show `-` for Key Vault, Storage, and Assessment Project PEs.
 

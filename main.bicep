@@ -7,7 +7,6 @@
 //   - Migrate Project (hub resource, Default PE)
 //   - Assessment Project (assessment engine, Default PE)
 //   - Master Site (appliance orchestration, Default PE)
-//   - VMware Site (discovery source)
 //   - Private DNS zones and VNet links
 //   - 6 private endpoints with DNS zone groups
 //
@@ -56,7 +55,6 @@ var recoveryVaultName = '${projectName}-rsv'
 var migrateProjectName = projectName
 var assessmentProjectName = '${projectName}-assess-${take(uniqueSuffix, 4)}'
 var masterSiteName = '${projectName}-mastersite'
-var vmwareSiteName = '${projectName}-vmwaresite'
 
 var migrateTags = union(tags, {
   'Migrate Project': projectName
@@ -224,8 +222,8 @@ resource kvCertificatesRole 'Microsoft.Authorization/roleAssignments@2022-04-01'
 // Migrate Solutions (registered tools)
 // ──────────────────────────────────────────────
 
-// Solutions must be created before the Assessment Project and VMware Site
-// that reference them. The portal-standard naming convention uses names
+// Solutions must be created before the Assessment Project
+// that references them. The portal-standard naming convention uses names
 // longer than 24 chars, so the 2018-09-01-preview API is required.
 
 resource solutionDiscovery 'Microsoft.Migrate/migrateProjects/solutions@2018-09-01-preview' = {
@@ -294,23 +292,6 @@ resource masterSite 'Microsoft.OffAzure/masterSites@2023-06-06' = {
     allowMultipleSites: true
     customerStorageAccountArmId: storageAccount.id
     sites: []
-  }
-}
-
-// ──────────────────────────────────────────────
-// VMware Site (discovery source)
-// ──────────────────────────────────────────────
-
-resource vmwareSite 'Microsoft.OffAzure/vmwareSites@2023-06-06' = {
-  name: vmwareSiteName
-  location: location
-  properties: {
-    discoverySolutionId: solutionDiscovery.id
-    discoveryScenario: 'Migrate'
-    agentDetails: {
-      keyVaultId: keyVault.id
-      keyVaultUri: keyVault.properties.vaultUri
-    }
   }
 }
 

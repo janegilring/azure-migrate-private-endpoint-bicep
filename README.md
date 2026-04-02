@@ -87,7 +87,6 @@ This module was **reverse-engineered from a working portal deployment** and prov
 | `location` | `string` | — | Resource group location | Azure region |
 | `privateEndpointSubnetId` | `string` | ✅ | — | Resource ID of the PE subnet |
 | `virtualNetworkId` | `string` | ✅ | — | Resource ID of the VNet (for DNS links) |
-| `keyVaultAccessPolicyObjectId` | `string` | — | `''` | Principal for KV access policies |
 | `tenantId` | `string` | — | Current tenant | Entra ID tenant |
 | `tags` | `object` | — | `{}` | Tags applied to all resources |
 
@@ -168,6 +167,24 @@ bicep/
      --uri "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Migrate/migrateProjects/<name>/privateEndpointConnections/<connection-name>?api-version=2020-05-01"
    ```
    Other resource types (Storage, Key Vault, Recovery Services) handle PE redeployments correctly.
+
+8. **ALZ Corp policy compatibility — appliance registration requires temporary policy exemption:** When deploying to a Corp Azure Landing Zone subscription with the `Deny-Public-Endpoints` policy, the Bicep module itself deploys successfully (Storage, Key Vault, and Recovery Services Vault all have `publicNetworkAccess: 'Disabled'`). However, the Azure Migrate portal's **"Generate key"** operation (needed for appliance registration) triggers an internal ARM deployment that modifies the Recovery Services Vault without including `publicNetworkAccess: 'Disabled'`, violating the ALZ Deny policy. This is a portal limitation — the portal's internal ARM template is Microsoft-owned and cannot be modified by customers. **Workaround:** Create a temporary, resource-scoped policy exemption on the Recovery Services Vault **before** clicking "Generate key":
+    ```bash
+    # Create exemption (before clicking "Generate key")
+    az policy exemption create \
+      --name "rsv-migrate-registration" \
+      --policy-assignment "<policy-assignment-id>" \
+      --scope "<rsv-resource-id>" \
+      --exemption-category Waiver \
+      --expiration-date "<7-days-from-now>" \
+      --description "Temporary exemption for Azure Migrate appliance registration. Portal Generate key omits publicNetworkAccess."
+
+    # Remove after appliance registration completes
+    az policy exemption delete \
+      --name "rsv-migrate-registration" \
+      --scope "<rsv-resource-id>"
+    ```
+    Notes: The `--policy-assignment` value can be found via `az policy assignment list --scope "/providers/Microsoft.Management/managementGroups/<mg-name>" --query "[?contains(name, 'Deny-Public')]"`. The exemption is scoped to the RSV resource only (not the resource group) and should be time-bounded (7-day expiration recommended).
 
 ## Outputs
 

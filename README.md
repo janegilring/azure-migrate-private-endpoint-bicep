@@ -155,7 +155,7 @@ bicep/
 
 6. **Assessment project RP soft-delete:** The Azure Migrate RP retains deleted assessment project names internally. If a deployment fails or a resource group is deleted and recreated with the same `projectName`, the assessment project may fail with `DataPreconditionFailed`. The template mitigates this by appending a resource-group-unique suffix to the assessment project name. If you encounter this error, use a different `projectName` or deploy to a different resource group.
 
-7. **Migrate project PE redeployment:** The private endpoint module uses the experimental `this.exists()` function (Bicep ≥ 0.40.2, feature flag `thisNamespace`) to preserve existing PE connections on redeployment. This prevents the `PrivateEndpointConnectionAlreadyExists` error from the Azure Migrate RP. The feature requires ARM backend support — if the backend has not yet rolled out, fall back to the manual workaround:
+7. **Migrate and Assessment project PE redeployment:** The private endpoint module uses the experimental `this.exists()` function (Bicep ≥ 0.40.2, feature flag `thisNamespace`) to preserve existing PE connections on redeployment. This prevents the `PrivateEndpointConnectionAlreadyExists` error from the Azure Migrate RP on both the Migrate project (`pe-migrate-project`) and Assessment project (`pe-assessment-project`). The feature requires ARM backend support — if the backend has not yet rolled out, fall back to the manual workaround:
    ```bash
    # List existing PE connections on the Migrate project
    az rest --method get \
@@ -165,6 +165,17 @@ bicep/
    # Delete the PE connection (use the name from above)
    az rest --method delete \
      --uri "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Migrate/migrateProjects/<name>/privateEndpointConnections/<connection-name>?api-version=2020-05-01"
+   ```
+   For the Assessment project:
+   ```bash
+   # List existing PE connections on the Assessment project
+   az rest --method get \
+     --uri "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Migrate/assessmentProjects/<name>?api-version=2020-05-01" \
+     --query "properties.privateEndpointConnections[].name" -o tsv
+
+   # Delete the PE connection (use the name from above)
+   az rest --method delete \
+     --uri "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.Migrate/assessmentProjects/<name>/privateEndpointConnections/<connection-name>?api-version=2020-05-01"
    ```
    Other resource types (Storage, Key Vault, Recovery Services) handle PE redeployments correctly.
 
@@ -185,6 +196,8 @@ bicep/
       --scope "<rsv-resource-id>"
     ```
     Notes: The `--policy-assignment` value can be found via `az policy assignment list --scope "/providers/Microsoft.Management/managementGroups/<mg-name>" --query "[?contains(name, 'Deny-Public')]"`. The exemption is scoped to the RSV resource only (not the resource group) and should be time-bounded (7-day expiration recommended).
+
+9. **Redeployment to same resource group:** The module deploys successfully on initial deployment to a fresh resource group. However, re-deploying to the same resource group will fail on the Assessment project and Migrate project private endpoints due to the `PrivateEndpointConnectionAlreadyExists` error described in limitation #7. **Recommendation:** If you need to redeploy the module, deploy to a new resource group, or use the manual workaround provided in limitation #7 to delete existing PE connections before redeploying.
 
 ## Outputs
 

@@ -127,6 +127,9 @@ resource recoveryVault 'Microsoft.RecoveryServices/vaults@2024-04-01' = {
   name: recoveryVaultName
   location: location
   tags: migrateTags
+  identity: {
+    type: 'SystemAssigned'
+  }
   sku: {
     name: 'RS0'
     tier: 'Standard'

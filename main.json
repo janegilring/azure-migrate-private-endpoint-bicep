@@ -1,0 +1,1606 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "languageVersion": "2.1-experimental",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+    "_EXPERIMENTAL_FEATURES_ENABLED": [
+      "Enable 'this' namespace"
+    ],
+    "_generator": {
+      "name": "bicep",
+      "version": "0.41.2.15936",
+      "templateHash": "2549625639839774582"
+    }
+  },
+  "parameters": {
+    "projectName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 20,
+      "metadata": {
+        "description": "Base name used to derive resource names. Must be 3-20 characters, lowercase alphanumeric."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for all resources."
+      }
+    },
+    "privateEndpointSubnetId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the existing subnet for private endpoints. The subnet must have privateEndpointNetworkPolicies set to Disabled."
+      }
+    },
+    "virtualNetworkId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the existing virtual network (used for DNS zone VNet links)."
+      }
+    },
+    "tenantId": {
+      "type": "string",
+      "defaultValue": "[subscription().tenantId]",
+      "metadata": {
+        "description": "Tenant ID for Key Vault. Defaults to the current tenant."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Tags to apply to all resources."
+      }
+    }
+  },
+  "variables": {
+    "uniqueSuffix": "[uniqueString(resourceGroup().id, parameters('projectName'))]",
+    "storageAccountName": "[toLower(format('{0}{1}', take(replace(parameters('projectName'), '-', ''), 14), take(variables('uniqueSuffix'), 10)))]",
+    "keyVaultName": "[format('{0}-{1}-kv', take(replace(parameters('projectName'), '-', ''), 12), take(variables('uniqueSuffix'), 8))]",
+    "recoveryVaultName": "[format('{0}-rsv', parameters('projectName'))]",
+    "migrateProjectName": "[parameters('projectName')]",
+    "assessmentProjectName": "[format('{0}-assess-{1}', parameters('projectName'), take(variables('uniqueSuffix'), 4))]",
+    "masterSiteName": "[format('{0}-mastersite', parameters('projectName'))]",
+    "vmwareSiteName": "[format('{0}-vmwaresite', parameters('projectName'))]",
+    "migrateTags": "[union(parameters('tags'), createObject('Migrate Project', parameters('projectName')))]"
+  },
+  "resources": {
+    "storageAccount": {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('migrateTags')]",
+      "kind": "StorageV2",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "properties": {
+        "accessTier": "Hot",
+        "allowBlobPublicAccess": false,
+        "allowCrossTenantReplication": false,
+        "minimumTlsVersion": "TLS1_2",
+        "supportsHttpsTrafficOnly": true,
+        "publicNetworkAccess": "Disabled",
+        "networkAcls": {
+          "defaultAction": "Deny",
+          "bypass": "AzureServices",
+          "ipRules": [],
+          "virtualNetworkRules": []
+        }
+      }
+    },
+    "keyVault": {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('keyVaultName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('migrateTags')]",
+      "properties": {
+        "tenantId": "[parameters('tenantId')]",
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "enableSoftDelete": true,
+        "enablePurgeProtection": true,
+        "enabledForDeployment": true,
+        "enabledForTemplateDeployment": true,
+        "enableRbacAuthorization": true,
+        "publicNetworkAccess": "disabled",
+        "networkAcls": {
+          "defaultAction": "Deny",
+          "bypass": "AzureServices",
+          "ipRules": [],
+          "virtualNetworkRules": []
+        }
+      }
+    },
+    "recoveryVault": {
+      "type": "Microsoft.RecoveryServices/vaults",
+      "apiVersion": "2024-04-01",
+      "name": "[variables('recoveryVaultName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('migrateTags')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "sku": {
+        "name": "RS0",
+        "tier": "Standard"
+      },
+      "properties": {
+        "publicNetworkAccess": "Disabled"
+      }
+    },
+    "migrateProject": {
+      "type": "Microsoft.Migrate/migrateProjects",
+      "apiVersion": "2020-05-01",
+      "name": "[variables('migrateProjectName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('migrateTags')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "publicNetworkAccess": "Disabled",
+        "utilityStorageAccountId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      },
+      "dependsOn": [
+        "storageAccount"
+      ]
+    },
+    "storageRoleAssignment": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.Migrate/migrateProjects', variables('migrateProjectName')), 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+        "principalId": "[reference('migrateProject', '2020-05-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "migrateProject",
+        "storageAccount"
+      ]
+    },
+    "kvSecretsRole": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), resourceId('Microsoft.Migrate/migrateProjects', variables('migrateProjectName')), 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')]",
+        "principalId": "[reference('migrateProject', '2020-05-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "keyVault",
+        "migrateProject"
+      ]
+    },
+    "kvCryptoRole": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), resourceId('Microsoft.Migrate/migrateProjects', variables('migrateProjectName')), '14b46e9e-c2b7-41b4-b07b-48a6ebf60603')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '14b46e9e-c2b7-41b4-b07b-48a6ebf60603')]",
+        "principalId": "[reference('migrateProject', '2020-05-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "keyVault",
+        "migrateProject"
+      ]
+    },
+    "kvCertificatesRole": {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), resourceId('Microsoft.Migrate/migrateProjects', variables('migrateProjectName')), 'a4417e6f-fecd-4de8-b567-7b0420556985')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a4417e6f-fecd-4de8-b567-7b0420556985')]",
+        "principalId": "[reference('migrateProject', '2020-05-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "keyVault",
+        "migrateProject"
+      ]
+    },
+    "solutionDiscovery": {
+      "type": "Microsoft.Migrate/migrateProjects/solutions",
+      "apiVersion": "2018-09-01-preview",
+      "name": "[format('{0}/{1}', variables('migrateProjectName'), 'Servers-Discovery-ServerDiscovery')]",
+      "properties": {
+        "goal": "Servers",
+        "purpose": "Discovery",
+        "tool": "ServerDiscovery",
+        "status": "Active",
+        "details": {
+          "extendedDetails": {
+            "privateEndpointDetails": "[format('{{\"subnetId\":\"{0}\",\"virtualNetworkLocation\":\"{1}\",\"skipPrivateDnsZoneCreation\":false}}', parameters('privateEndpointSubnetId'), parameters('location'))]",
+            "keyVaultId": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+            "keyVaultUrl": "[reference('keyVault').vaultUri]",
+            "masterSiteId": "[resourceId('Microsoft.OffAzure/masterSites', variables('masterSiteName'))]"
+          }
+        }
+      },
+      "dependsOn": [
+        "keyVault",
+        "masterSite",
+        "migrateProject"
+      ]
+    },
+    "solutionAssessment": {
+      "type": "Microsoft.Migrate/migrateProjects/solutions",
+      "apiVersion": "2018-09-01-preview",
+      "name": "[format('{0}/{1}', variables('migrateProjectName'), 'Servers-Assessment-ServerAssessment')]",
+      "properties": {
+        "goal": "Servers",
+        "purpose": "Assessment",
+        "tool": "ServerAssessment",
+        "status": "Active",
+        "details": {
+          "extendedDetails": {
+            "projectId": "[resourceId('Microsoft.Migrate/assessmentProjects', variables('assessmentProjectName'))]"
+          }
+        }
+      },
+      "dependsOn": [
+        "migrateProject"
+      ]
+    },
+    "solutionMigration": {
+      "type": "Microsoft.Migrate/migrateProjects/solutions",
+      "apiVersion": "2018-09-01-preview",
+      "name": "[format('{0}/{1}', variables('migrateProjectName'), 'Servers-Migration-ServerMigration')]",
+      "properties": {
+        "goal": "Servers",
+        "purpose": "Migration",
+        "tool": "ServerMigration",
+        "status": "Active",
+        "details": {
+          "extendedDetails": {
+            "vaultId": "[resourceId('Microsoft.RecoveryServices/vaults', variables('recoveryVaultName'))]"
+          }
+        }
+      },
+      "dependsOn": [
+        "migrateProject",
+        "recoveryVault"
+      ]
+    },
+    "masterSite": {
+      "type": "Microsoft.OffAzure/masterSites",
+      "apiVersion": "2023-06-06",
+      "name": "[variables('masterSiteName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "publicNetworkAccess": "Disabled",
+        "allowMultipleSites": true,
+        "customerStorageAccountArmId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "sites": []
+      },
+      "dependsOn": [
+        "storageAccount"
+      ]
+    },
+    "vmwareSite": {
+      "type": "Microsoft.OffAzure/vmwareSites",
+      "apiVersion": "2023-06-06",
+      "name": "[variables('vmwareSiteName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "discoverySolutionId": "[resourceId('Microsoft.Migrate/migrateProjects/solutions', variables('migrateProjectName'), 'Servers-Discovery-ServerDiscovery')]",
+        "discoveryScenario": "Migrate",
+        "agentDetails": {
+          "keyVaultId": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+          "keyVaultUri": "[reference('keyVault').vaultUri]"
+        }
+      },
+      "dependsOn": [
+        "keyVault",
+        "solutionDiscovery"
+      ]
+    },
+    "assessmentProject": {
+      "type": "Microsoft.Migrate/assessmentProjects",
+      "apiVersion": "2019-10-01",
+      "name": "[variables('assessmentProjectName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('migrateTags')]",
+      "properties": {
+        "publicNetworkAccess": "Disabled",
+        "projectStatus": "Active",
+        "customerStorageAccountArmId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "assessmentSolutionId": "[resourceId('Microsoft.Migrate/migrateProjects/solutions', variables('migrateProjectName'), 'Servers-Assessment-ServerAssessment')]"
+      },
+      "dependsOn": [
+        "kvCertificatesRole",
+        "kvCryptoRole",
+        "kvSecretsRole",
+        "solutionAssessment",
+        "storageAccount",
+        "storageRoleAssignment"
+      ]
+    },
+    "dnsZoneBlob": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "dns-privatelink-blob",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "zoneName": {
+            "value": "[format('privatelink.blob.{0}', environment().suffixes.storage)]"
+          },
+          "virtualNetworkId": {
+            "value": "[parameters('virtualNetworkId')]"
+          },
+          "tags": {
+            "value": "[variables('migrateTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.1-experimental",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+            "_EXPERIMENTAL_FEATURES_ENABLED": [
+              "Enable 'this' namespace"
+            ],
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "11030266799298614074"
+            }
+          },
+          "parameters": {
+            "zoneName": {
+              "type": "string",
+              "metadata": {
+                "description": "FQDN of the private DNS zone (e.g., privatelink.vaultcore.azure.net)."
+              }
+            },
+            "virtualNetworkId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the virtual network to link to the DNS zone."
+              }
+            },
+            "registrationEnabled": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Whether to enable auto-registration of VM DNS records."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the DNS zone."
+              }
+            }
+          },
+          "resources": {
+            "dnsZone": {
+              "type": "Microsoft.Network/privateDnsZones",
+              "apiVersion": "2024-06-01",
+              "name": "[parameters('zoneName')]",
+              "location": "global",
+              "tags": "[parameters('tags')]"
+            },
+            "vnetLink": {
+              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+              "apiVersion": "2024-06-01",
+              "name": "[format('{0}/{1}', parameters('zoneName'), format('{0}-link', last(split(parameters('virtualNetworkId'), '/'))))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "virtualNetwork": {
+                  "id": "[parameters('virtualNetworkId')]"
+                },
+                "registrationEnabled": "[parameters('registrationEnabled')]"
+              },
+              "dependsOn": [
+                "dnsZone"
+              ]
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the private DNS zone."
+              },
+              "value": "[resourceId('Microsoft.Network/privateDnsZones', parameters('zoneName'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private DNS zone."
+              },
+              "value": "[parameters('zoneName')]"
+            }
+          }
+        }
+      }
+    },
+    "dnsZoneKeyVault": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "dns-privatelink-vaultcore",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "zoneName": {
+            "value": "privatelink.vaultcore.azure.net"
+          },
+          "virtualNetworkId": {
+            "value": "[parameters('virtualNetworkId')]"
+          },
+          "tags": {
+            "value": "[variables('migrateTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.1-experimental",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+            "_EXPERIMENTAL_FEATURES_ENABLED": [
+              "Enable 'this' namespace"
+            ],
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "11030266799298614074"
+            }
+          },
+          "parameters": {
+            "zoneName": {
+              "type": "string",
+              "metadata": {
+                "description": "FQDN of the private DNS zone (e.g., privatelink.vaultcore.azure.net)."
+              }
+            },
+            "virtualNetworkId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the virtual network to link to the DNS zone."
+              }
+            },
+            "registrationEnabled": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Whether to enable auto-registration of VM DNS records."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the DNS zone."
+              }
+            }
+          },
+          "resources": {
+            "dnsZone": {
+              "type": "Microsoft.Network/privateDnsZones",
+              "apiVersion": "2024-06-01",
+              "name": "[parameters('zoneName')]",
+              "location": "global",
+              "tags": "[parameters('tags')]"
+            },
+            "vnetLink": {
+              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+              "apiVersion": "2024-06-01",
+              "name": "[format('{0}/{1}', parameters('zoneName'), format('{0}-link', last(split(parameters('virtualNetworkId'), '/'))))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "virtualNetwork": {
+                  "id": "[parameters('virtualNetworkId')]"
+                },
+                "registrationEnabled": "[parameters('registrationEnabled')]"
+              },
+              "dependsOn": [
+                "dnsZone"
+              ]
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the private DNS zone."
+              },
+              "value": "[resourceId('Microsoft.Network/privateDnsZones', parameters('zoneName'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private DNS zone."
+              },
+              "value": "[parameters('zoneName')]"
+            }
+          }
+        }
+      }
+    },
+    "dnsZoneSiteRecovery": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "dns-privatelink-siterecovery",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "zoneName": {
+            "value": "privatelink.siterecovery.windowsazure.com"
+          },
+          "virtualNetworkId": {
+            "value": "[parameters('virtualNetworkId')]"
+          },
+          "tags": {
+            "value": "[variables('migrateTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.1-experimental",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+            "_EXPERIMENTAL_FEATURES_ENABLED": [
+              "Enable 'this' namespace"
+            ],
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "11030266799298614074"
+            }
+          },
+          "parameters": {
+            "zoneName": {
+              "type": "string",
+              "metadata": {
+                "description": "FQDN of the private DNS zone (e.g., privatelink.vaultcore.azure.net)."
+              }
+            },
+            "virtualNetworkId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the virtual network to link to the DNS zone."
+              }
+            },
+            "registrationEnabled": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Whether to enable auto-registration of VM DNS records."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the DNS zone."
+              }
+            }
+          },
+          "resources": {
+            "dnsZone": {
+              "type": "Microsoft.Network/privateDnsZones",
+              "apiVersion": "2024-06-01",
+              "name": "[parameters('zoneName')]",
+              "location": "global",
+              "tags": "[parameters('tags')]"
+            },
+            "vnetLink": {
+              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+              "apiVersion": "2024-06-01",
+              "name": "[format('{0}/{1}', parameters('zoneName'), format('{0}-link', last(split(parameters('virtualNetworkId'), '/'))))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "virtualNetwork": {
+                  "id": "[parameters('virtualNetworkId')]"
+                },
+                "registrationEnabled": "[parameters('registrationEnabled')]"
+              },
+              "dependsOn": [
+                "dnsZone"
+              ]
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the private DNS zone."
+              },
+              "value": "[resourceId('Microsoft.Network/privateDnsZones', parameters('zoneName'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private DNS zone."
+              },
+              "value": "[parameters('zoneName')]"
+            }
+          }
+        }
+      }
+    },
+    "peMigrateProject": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "pe-migrate-project",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "name": {
+            "value": "[format('{0}-pe', variables('migrateProjectName'))]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "subnetId": {
+            "value": "[parameters('privateEndpointSubnetId')]"
+          },
+          "privateLinkServiceId": {
+            "value": "[resourceId('Microsoft.Migrate/migrateProjects', variables('migrateProjectName'))]"
+          },
+          "groupIds": {
+            "value": [
+              "Default"
+            ]
+          },
+          "tags": {
+            "value": "[variables('migrateTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.1-experimental",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+            "_EXPERIMENTAL_FEATURES_ENABLED": [
+              "Enable 'this' namespace"
+            ],
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "8775553553366809140"
+            }
+          },
+          "parameters": {
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for the private endpoint."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the subnet where the private endpoint will be placed."
+              }
+            },
+            "privateLinkServiceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the target resource to connect via private link."
+              }
+            },
+            "groupIds": {
+              "type": "array",
+              "metadata": {
+                "description": "Group ID(s) for the private link connection (e.g., \"blob\", \"vault\", \"Default\", \"AzureSiteRecovery\")."
+              }
+            },
+            "privateDnsZoneId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional: Resource ID of the private DNS zone to associate with this endpoint."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the private endpoint."
+              }
+            }
+          },
+          "resources": {
+            "privateEndpoint": {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-05-01",
+              "name": "[parameters('name')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('subnetId')]"
+                },
+                "privateLinkServiceConnections": "[if(not(empty(target('full'))), coalesce(tryGet(tryGet(target('full'), 'properties'), 'privateLinkServiceConnections'), createArray()), createArray(createObject('name', parameters('name'), 'properties', createObject('privateLinkServiceId', parameters('privateLinkServiceId'), 'groupIds', parameters('groupIds')))))]"
+              }
+            },
+            "dnsZoneGroup": {
+              "condition": "[not(empty(parameters('privateDnsZoneId')))]",
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-05-01",
+              "name": "[format('{0}/{1}', parameters('name'), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "[replace(last(split(parameters('privateDnsZoneId'), '/')), '.', '-')]",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('privateDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "privateEndpoint"
+              ]
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the private endpoint."
+              },
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', parameters('name'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              },
+              "value": "[parameters('name')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "migrateProject"
+      ]
+    },
+    "peAssessmentProject": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "pe-assessment-project",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "name": {
+            "value": "[format('{0}-pe', variables('assessmentProjectName'))]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "subnetId": {
+            "value": "[parameters('privateEndpointSubnetId')]"
+          },
+          "privateLinkServiceId": {
+            "value": "[resourceId('Microsoft.Migrate/assessmentProjects', variables('assessmentProjectName'))]"
+          },
+          "groupIds": {
+            "value": [
+              "Default"
+            ]
+          },
+          "tags": {
+            "value": "[variables('migrateTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.1-experimental",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+            "_EXPERIMENTAL_FEATURES_ENABLED": [
+              "Enable 'this' namespace"
+            ],
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "8775553553366809140"
+            }
+          },
+          "parameters": {
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for the private endpoint."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the subnet where the private endpoint will be placed."
+              }
+            },
+            "privateLinkServiceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the target resource to connect via private link."
+              }
+            },
+            "groupIds": {
+              "type": "array",
+              "metadata": {
+                "description": "Group ID(s) for the private link connection (e.g., \"blob\", \"vault\", \"Default\", \"AzureSiteRecovery\")."
+              }
+            },
+            "privateDnsZoneId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional: Resource ID of the private DNS zone to associate with this endpoint."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the private endpoint."
+              }
+            }
+          },
+          "resources": {
+            "privateEndpoint": {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-05-01",
+              "name": "[parameters('name')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('subnetId')]"
+                },
+                "privateLinkServiceConnections": "[if(not(empty(target('full'))), coalesce(tryGet(tryGet(target('full'), 'properties'), 'privateLinkServiceConnections'), createArray()), createArray(createObject('name', parameters('name'), 'properties', createObject('privateLinkServiceId', parameters('privateLinkServiceId'), 'groupIds', parameters('groupIds')))))]"
+              }
+            },
+            "dnsZoneGroup": {
+              "condition": "[not(empty(parameters('privateDnsZoneId')))]",
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-05-01",
+              "name": "[format('{0}/{1}', parameters('name'), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "[replace(last(split(parameters('privateDnsZoneId'), '/')), '.', '-')]",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('privateDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "privateEndpoint"
+              ]
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the private endpoint."
+              },
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', parameters('name'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              },
+              "value": "[parameters('name')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "assessmentProject"
+      ]
+    },
+    "peStorage": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "pe-storage-blob",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "name": {
+            "value": "[format('{0}-pe', variables('storageAccountName'))]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "subnetId": {
+            "value": "[parameters('privateEndpointSubnetId')]"
+          },
+          "privateLinkServiceId": {
+            "value": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+          },
+          "groupIds": {
+            "value": [
+              "blob"
+            ]
+          },
+          "privateDnsZoneId": {
+            "value": "[reference('dnsZoneBlob').outputs.id.value]"
+          },
+          "tags": {
+            "value": "[variables('migrateTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.1-experimental",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+            "_EXPERIMENTAL_FEATURES_ENABLED": [
+              "Enable 'this' namespace"
+            ],
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "8775553553366809140"
+            }
+          },
+          "parameters": {
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for the private endpoint."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the subnet where the private endpoint will be placed."
+              }
+            },
+            "privateLinkServiceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the target resource to connect via private link."
+              }
+            },
+            "groupIds": {
+              "type": "array",
+              "metadata": {
+                "description": "Group ID(s) for the private link connection (e.g., \"blob\", \"vault\", \"Default\", \"AzureSiteRecovery\")."
+              }
+            },
+            "privateDnsZoneId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional: Resource ID of the private DNS zone to associate with this endpoint."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the private endpoint."
+              }
+            }
+          },
+          "resources": {
+            "privateEndpoint": {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-05-01",
+              "name": "[parameters('name')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('subnetId')]"
+                },
+                "privateLinkServiceConnections": "[if(not(empty(target('full'))), coalesce(tryGet(tryGet(target('full'), 'properties'), 'privateLinkServiceConnections'), createArray()), createArray(createObject('name', parameters('name'), 'properties', createObject('privateLinkServiceId', parameters('privateLinkServiceId'), 'groupIds', parameters('groupIds')))))]"
+              }
+            },
+            "dnsZoneGroup": {
+              "condition": "[not(empty(parameters('privateDnsZoneId')))]",
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-05-01",
+              "name": "[format('{0}/{1}', parameters('name'), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "[replace(last(split(parameters('privateDnsZoneId'), '/')), '.', '-')]",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('privateDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "privateEndpoint"
+              ]
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the private endpoint."
+              },
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', parameters('name'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              },
+              "value": "[parameters('name')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "dnsZoneBlob",
+        "storageAccount"
+      ]
+    },
+    "peKeyVault": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "pe-keyvault",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "name": {
+            "value": "[format('{0}-pe', variables('keyVaultName'))]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "subnetId": {
+            "value": "[parameters('privateEndpointSubnetId')]"
+          },
+          "privateLinkServiceId": {
+            "value": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+          },
+          "groupIds": {
+            "value": [
+              "vault"
+            ]
+          },
+          "privateDnsZoneId": {
+            "value": "[reference('dnsZoneKeyVault').outputs.id.value]"
+          },
+          "tags": {
+            "value": "[variables('migrateTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.1-experimental",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+            "_EXPERIMENTAL_FEATURES_ENABLED": [
+              "Enable 'this' namespace"
+            ],
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "8775553553366809140"
+            }
+          },
+          "parameters": {
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for the private endpoint."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the subnet where the private endpoint will be placed."
+              }
+            },
+            "privateLinkServiceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the target resource to connect via private link."
+              }
+            },
+            "groupIds": {
+              "type": "array",
+              "metadata": {
+                "description": "Group ID(s) for the private link connection (e.g., \"blob\", \"vault\", \"Default\", \"AzureSiteRecovery\")."
+              }
+            },
+            "privateDnsZoneId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional: Resource ID of the private DNS zone to associate with this endpoint."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the private endpoint."
+              }
+            }
+          },
+          "resources": {
+            "privateEndpoint": {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-05-01",
+              "name": "[parameters('name')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('subnetId')]"
+                },
+                "privateLinkServiceConnections": "[if(not(empty(target('full'))), coalesce(tryGet(tryGet(target('full'), 'properties'), 'privateLinkServiceConnections'), createArray()), createArray(createObject('name', parameters('name'), 'properties', createObject('privateLinkServiceId', parameters('privateLinkServiceId'), 'groupIds', parameters('groupIds')))))]"
+              }
+            },
+            "dnsZoneGroup": {
+              "condition": "[not(empty(parameters('privateDnsZoneId')))]",
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-05-01",
+              "name": "[format('{0}/{1}', parameters('name'), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "[replace(last(split(parameters('privateDnsZoneId'), '/')), '.', '-')]",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('privateDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "privateEndpoint"
+              ]
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the private endpoint."
+              },
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', parameters('name'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              },
+              "value": "[parameters('name')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "dnsZoneKeyVault",
+        "keyVault"
+      ]
+    },
+    "peRecoveryVault": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "pe-recovery-vault",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "name": {
+            "value": "[format('{0}-pe', variables('recoveryVaultName'))]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "subnetId": {
+            "value": "[parameters('privateEndpointSubnetId')]"
+          },
+          "privateLinkServiceId": {
+            "value": "[resourceId('Microsoft.RecoveryServices/vaults', variables('recoveryVaultName'))]"
+          },
+          "groupIds": {
+            "value": [
+              "AzureSiteRecovery"
+            ]
+          },
+          "privateDnsZoneId": {
+            "value": "[reference('dnsZoneSiteRecovery').outputs.id.value]"
+          },
+          "tags": {
+            "value": "[variables('migrateTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.1-experimental",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+            "_EXPERIMENTAL_FEATURES_ENABLED": [
+              "Enable 'this' namespace"
+            ],
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "8775553553366809140"
+            }
+          },
+          "parameters": {
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for the private endpoint."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the subnet where the private endpoint will be placed."
+              }
+            },
+            "privateLinkServiceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the target resource to connect via private link."
+              }
+            },
+            "groupIds": {
+              "type": "array",
+              "metadata": {
+                "description": "Group ID(s) for the private link connection (e.g., \"blob\", \"vault\", \"Default\", \"AzureSiteRecovery\")."
+              }
+            },
+            "privateDnsZoneId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional: Resource ID of the private DNS zone to associate with this endpoint."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the private endpoint."
+              }
+            }
+          },
+          "resources": {
+            "privateEndpoint": {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-05-01",
+              "name": "[parameters('name')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('subnetId')]"
+                },
+                "privateLinkServiceConnections": "[if(not(empty(target('full'))), coalesce(tryGet(tryGet(target('full'), 'properties'), 'privateLinkServiceConnections'), createArray()), createArray(createObject('name', parameters('name'), 'properties', createObject('privateLinkServiceId', parameters('privateLinkServiceId'), 'groupIds', parameters('groupIds')))))]"
+              }
+            },
+            "dnsZoneGroup": {
+              "condition": "[not(empty(parameters('privateDnsZoneId')))]",
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-05-01",
+              "name": "[format('{0}/{1}', parameters('name'), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "[replace(last(split(parameters('privateDnsZoneId'), '/')), '.', '-')]",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('privateDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "privateEndpoint"
+              ]
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the private endpoint."
+              },
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', parameters('name'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              },
+              "value": "[parameters('name')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "dnsZoneSiteRecovery",
+        "recoveryVault"
+      ]
+    },
+    "peMasterSite": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "pe-master-site",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "name": {
+            "value": "[format('{0}-pe', variables('masterSiteName'))]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "subnetId": {
+            "value": "[parameters('privateEndpointSubnetId')]"
+          },
+          "privateLinkServiceId": {
+            "value": "[resourceId('Microsoft.OffAzure/masterSites', variables('masterSiteName'))]"
+          },
+          "groupIds": {
+            "value": [
+              "Default"
+            ]
+          },
+          "tags": {
+            "value": "[variables('migrateTags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.1-experimental",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_EXPERIMENTAL_WARNING": "This template uses ARM features that are experimental. Experimental features should be enabled for testing purposes only, as there are no guarantees about the quality or stability of these features. Do not enable these settings for any production usage, or your production environment may be subject to breaking.",
+            "_EXPERIMENTAL_FEATURES_ENABLED": [
+              "Enable 'this' namespace"
+            ],
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "8775553553366809140"
+            }
+          },
+          "parameters": {
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for the private endpoint."
+              }
+            },
+            "subnetId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the subnet where the private endpoint will be placed."
+              }
+            },
+            "privateLinkServiceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the target resource to connect via private link."
+              }
+            },
+            "groupIds": {
+              "type": "array",
+              "metadata": {
+                "description": "Group ID(s) for the private link connection (e.g., \"blob\", \"vault\", \"Default\", \"AzureSiteRecovery\")."
+              }
+            },
+            "privateDnsZoneId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Optional: Resource ID of the private DNS zone to associate with this endpoint."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Tags to apply to the private endpoint."
+              }
+            }
+          },
+          "resources": {
+            "privateEndpoint": {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2024-05-01",
+              "name": "[parameters('name')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('subnetId')]"
+                },
+                "privateLinkServiceConnections": "[if(not(empty(target('full'))), coalesce(tryGet(tryGet(target('full'), 'properties'), 'privateLinkServiceConnections'), createArray()), createArray(createObject('name', parameters('name'), 'properties', createObject('privateLinkServiceId', parameters('privateLinkServiceId'), 'groupIds', parameters('groupIds')))))]"
+              }
+            },
+            "dnsZoneGroup": {
+              "condition": "[not(empty(parameters('privateDnsZoneId')))]",
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2024-05-01",
+              "name": "[format('{0}/{1}', parameters('name'), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "[replace(last(split(parameters('privateDnsZoneId'), '/')), '.', '-')]",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('privateDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "privateEndpoint"
+              ]
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the private endpoint."
+              },
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', parameters('name'))]"
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the private endpoint."
+              },
+              "value": "[parameters('name')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "masterSite"
+      ]
+    }
+  },
+  "outputs": {
+    "migrateProjectId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the Migrate Project."
+      },
+      "value": "[resourceId('Microsoft.Migrate/migrateProjects', variables('migrateProjectName'))]"
+    },
+    "assessmentProjectId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the Assessment Project."
+      },
+      "value": "[resourceId('Microsoft.Migrate/assessmentProjects', variables('assessmentProjectName'))]"
+    },
+    "storageAccountId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the Storage Account."
+      },
+      "value": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+    },
+    "keyVaultId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the Key Vault."
+      },
+      "value": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+    },
+    "recoveryVaultId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the Recovery Services Vault."
+      },
+      "value": "[resourceId('Microsoft.RecoveryServices/vaults', variables('recoveryVaultName'))]"
+    },
+    "masterSiteId": {
+      "type": "string",
+      "metadata": {
+        "description": "Resource ID of the Master Site."
+      },
+      "value": "[resourceId('Microsoft.OffAzure/masterSites', variables('masterSiteName'))]"
+    },
+    "migrateProjectPrincipalId": {
+      "type": "string",
+      "metadata": {
+        "description": "System-assigned identity principal ID of the Migrate Project."
+      },
+      "value": "[reference('migrateProject', '2020-05-01', 'full').identity.principalId]"
+    }
+  }
+}

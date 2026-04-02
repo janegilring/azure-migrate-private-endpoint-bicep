@@ -185,4 +185,4 @@ bicep/
 
 - [Azure Migrate documentation](https://learn.microsoft.com/en-us/azure/migrate/migrate-services-overview)
 - [Use Azure Migrate with private endpoints](https://learn.microsoft.com/en-us/azure/migrate/how-to-use-azure-migrate-with-private-endpoints)
-- [GitHub Issue #7](https://github.com/janegilring/azure-migrate/issues/7) — Tracking issue
+- [bicep-types-az GitHub Issue #2707](https://github.com/Azure/bicep-types-az/issues/2707) — Tracking issue for missing properties in Bicep type definitions

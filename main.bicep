@@ -38,10 +38,7 @@ param privateEndpointSubnetId string
 @description('Resource ID of the existing virtual network (used for DNS zone VNet links).')
 param virtualNetworkId string
 
-@description('Object ID of the principal that should receive Key Vault access policies (e.g., deploying user or service principal).')
-param keyVaultAccessPolicyObjectId string = ''
-
-@description('Tenant ID for Key Vault access policies. Defaults to the current tenant.')
+@description('Tenant ID for Key Vault. Defaults to the current tenant.')
 param tenantId string = subscription().tenantId
 
 @description('Tags to apply to all resources.')
@@ -83,6 +80,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     allowCrossTenantReplication: false
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
+    publicNetworkAccess: 'Disabled'
     networkAcls: {
       defaultAction: 'Deny'
       bypass: 'AzureServices'
@@ -107,27 +105,17 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
       name: 'standard'
     }
     enableSoftDelete: true
+    enablePurgeProtection: true
     enabledForDeployment: true
     enabledForTemplateDeployment: true
-    enableRbacAuthorization: false
+    enableRbacAuthorization: true
+    publicNetworkAccess: 'disabled'
     networkAcls: {
       defaultAction: 'Deny'
       bypass: 'AzureServices'
       ipRules: []
       virtualNetworkRules: []
     }
-    accessPolicies: !empty(keyVaultAccessPolicyObjectId) ? [
-      {
-        objectId: keyVaultAccessPolicyObjectId
-        tenantId: tenantId
-        permissions: {
-          keys: [ 'all' ]
-          secrets: [ 'all' ]
-          certificates: [ 'all' ]
-          storage: [ 'all' ]
-        }
-      }
-    ] : []
   }
 }
 
@@ -186,22 +174,46 @@ resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
-// Key Vault access policy for the Migrate project managed identity
-resource keyVaultAccessPolicyMigrate 'Microsoft.KeyVault/vaults/accessPolicies@2023-07-01' = {
-  parent: keyVault
-  name: 'add'
+// Key Vault RBAC role assignments for the Migrate project managed identity
+// Key Vault Secrets Officer - get, list, set secrets
+resource kvSecretsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: keyVault
+  name: guid(keyVault.id, migrateProject.id, 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
   properties: {
-    accessPolicies: [
-      {
-        objectId: migrateProject.identity.principalId
-        tenantId: tenantId
-        permissions: {
-          keys: [ 'get', 'list', 'create' ]
-          secrets: [ 'get', 'list', 'set' ]
-          certificates: [ 'get', 'list' ]
-        }
-      }
-    ]
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'b86a8fe4-44ce-4948-aee5-eccb2c155cd7' // Key Vault Secrets Officer
+    )
+    principalId: migrateProject.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Key Vault Crypto Officer - get, list, create keys
+resource kvCryptoRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: keyVault
+  name: guid(keyVault.id, migrateProject.id, '14b46e9e-c2b7-41b4-b07b-48a6ebf60603')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '14b46e9e-c2b7-41b4-b07b-48a6ebf60603' // Key Vault Crypto Officer
+    )
+    principalId: migrateProject.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Key Vault Certificates Officer - get, list certificates
+resource kvCertificatesRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: keyVault
+  name: guid(keyVault.id, migrateProject.id, 'a4417e6f-fecd-4de8-b567-7b0420556985')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'a4417e6f-fecd-4de8-b567-7b0420556985' // Key Vault Certificates Officer
+    )
+    principalId: migrateProject.identity.principalId
+    principalType: 'ServicePrincipal'
   }
 }
 
@@ -315,7 +327,9 @@ resource assessmentProject 'Microsoft.Migrate/assessmentProjects@2019-10-01' = {
   }
   dependsOn: [
     storageRoleAssignment
-    keyVaultAccessPolicyMigrate
+    kvSecretsRole
+    kvCryptoRole
+    kvCertificatesRole
   ]
 }
 
